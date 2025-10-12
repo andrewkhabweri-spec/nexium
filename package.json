@@ -1,0 +1,22 @@
+{
+  "name": "nexium-orm",
+  "version": "4.1.0",
+  "description": "Nexium ORM v4.1 - Lightweight Laravel-inspired ORM for Node.js",
+  "main": "index.js",
+  "scripts": {
+    "script": "node artisan.js"
+  },
+  "dependencies": {
+    "mysql2": "^3.15.2",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.2.2"
+  },
+  "keywords": [
+    "nexium-orm",
+    "Node.js orm",
+    "Laravel-inspired ORM",
+    "Laravel-inspired ORM for Node.js"
+  ],
+  "author": "Andrew Khabweri",
+  "license": "MIT"
+}
