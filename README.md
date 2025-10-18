@@ -52,7 +52,7 @@ npm i nexium-orm
 npm install mysql2 dotenv bcrypt
 
 ```bash
-#Make Sure you put this in package.json inside your project directory for CLI generating and running database migrations Model generate and seeders to work
+#Make Sure you put this in package.json inside your project directory for CLI generating and #running database migrations Model generate and seeders to work
 
 "scripts": {
   "artisan": "node ./node_modules/nexium-orm/artisan.js"
