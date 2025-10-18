@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
-const DB = require('./models/lib/model');
+const DB = require('nexium-orm');
 const args = process.argv.slice(2);
 
 const MIGRATIONS_DIR = './database/migrations';
@@ -16,7 +16,7 @@ function getTimestamp() {
   return now.toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
 }
 
-// ------------------ SCHEMA BUILDER (Knex-like) ------------------
+// ------------------ SCHEMA BUILDER ------------------
 
 DB.schema = {
   createTable: async (tableName, callback) => {
@@ -280,14 +280,11 @@ function generateModel(name, fieldArgs = []) {
 
     const content = `
 // ${className} Model
-const { Model, DB } = require('./lib/model');
+const { BaseModel } = require('nexium-orm');
 
-DB.initFromEnv({ debug: true });
-
-class ${className} extends Model {
+class ${className} extends BaseModel {
   static table = '${tableName}';
   static primaryKey = 'id';
-  static autoIncrement = true;
   static timestamps = true;
   static fillable = ${fillableArray};
 }
@@ -372,16 +369,16 @@ module.exports = ${className};
 📦 CLI Migration & Seeder Tool
 
 Usage:
-  node migrate.js generate <table> <field:type>...
-  node migrate.js up
-  node migrate.js rollback
+  npm run artisan -- -- generate <table> <field:type>...
+  npm run artisan -- up
+  npm run artisan -- rollback
 
-  node migrate.js seed:generate <name>
-  node migrate.js seed
-  node migrate.js seed:refresh
-  node migrate.js seed:only 20251008_users_seed.js
-  node migrate.js model User
-  node migrate.js model Product name:string price:decimal stock:integer
+  npm run artisan -- seed:generate <name>
+  npm run artisan -- seed
+  npm run artisan -- seed:refresh
+  npm run artisan -- seed:only 20251008_users_seed.js
+  npm run artisan -- model User
+  npm run artisan -- model Product name:string price:decimal stock:integer
 
 
       `);
