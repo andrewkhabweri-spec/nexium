@@ -1,0 +1,40 @@
+{
+  "name": "nexium-orm",
+  "version": "4.2.3",
+  "description": "Nexium ORM v4.2 - Lightweight Laravel-inspired ORM for Node.js",
+  "main": "index.js",
+  "types": "types/index.d.ts",
+    "repository": {
+    "type": "git",
+    "url": "https://github.com/andrewkhabweri-spec/nexium.git"
+  },
+  "scripts": {
+    "artisan": "node artisan.js",
+    "build:types": "tsc"
+    
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.2.2"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "chalk": "^4.1.2",
+    "dotenv": "^17.2.2",
+    "ioredis": "^5.3.1",
+    "mysql2": "^3.15.2",
+    "pg": "^8.0.0",
+    "sqlite3": "^5.1.6"
+  },
+  "keywords": [
+    "nexium-orm",
+    "Node.js orm",
+    "Laravel-inspired ORM",
+    "Laravel-inspired ORM for Node.js"
+  ],
+  "author": {
+    "name": "Andrew Khabweri",
+    "email": "andrewkhabweri@gmail.com"
+  },
+  "license": "MIT"
+}
