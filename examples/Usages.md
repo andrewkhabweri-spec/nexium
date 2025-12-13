@@ -22,7 +22,7 @@ const firstOrFail = await User.where('name', 'Alice').firstOrFail();
 
 const user = await User.findBy('email', 'jane@example.com');
 // by default Field password is Auto encrypted when creating
-const isValid = await user.checkPassword('user_input_password');
+const isValid = await user.checkPassword(password);
 // Delete (soft delete if enabled)
 await user.delete();
 
