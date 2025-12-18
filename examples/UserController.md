@@ -53,6 +53,24 @@ class UserController {
     }
   }
 
+  static async search(req, res) {
+    try {
+      const query = req.query.q || '';
+      let results = []
+      // const results = await SearchService.search(query);
+      if (query) {
+        results = await User
+          .query()
+          .where('name', 'ILIKE', `%${query}%`) // PostgreSQL-style case-insensitive LIKE
+          .orWhere('email', 'ILIKE', `%${query}%`) // optional: more fields
+      }
+      res.render('pages/home/search', { query, results });
+    } catch (err) {
+      console.error('Search error:', err);
+      res.status(500).send('Search failed.');
+    }
+  }
+
   // PUT /users/:id
   async update(req, res) {
     try {
