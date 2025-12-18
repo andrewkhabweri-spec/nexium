@@ -1,10 +1,3 @@
-export type DateTimeOptions = {
-    zone?: string;
-    locale?: string;
-};
-export type InfoOptions = {
-    locale?: string;
-};
 export class DB {
     static driver: any;
     static config: any;
@@ -47,6 +40,7 @@ export class DB {
 export class Model {
     static table: any;
     static primaryKey: string;
+    static slugKey: string;
     static timestamps: boolean;
     static fillable: any;
     static tableSingular: any;
@@ -56,6 +50,7 @@ export class Model {
     static visible: any;
     static rules: {};
     static customMessages: {};
+    static _load: any[];
     static validate(data: any, id: any, ignoreId?: any): Promise<Validator>;
     static get tableName(): any;
     static boot(): void;
@@ -73,8 +68,8 @@ export class Model {
     static whereNot(...args: any[]): QueryBuilder;
     static whereNotIn(col: any, arr: any): QueryBuilder;
     static whereNull(col: any): QueryBuilder;
-    static find(id: any): Promise<any>;
-    static findOrFail(id: any): Promise<any>;
+    static find(value: any): Promise<any>;
+    static findOrFail(value: any): Promise<any>;
     static findBy(col: any, value: any): Promise<any>;
     static findByOrFail(col: any, value: any): Promise<any>;
     static findManyBy(col: any, values?: any[]): Promise<any[] | Collection>;
@@ -106,6 +101,7 @@ export class Model {
     trigger(event: any): Promise<void>;
     sanitize(attrs?: {}): {};
     fill(attrs?: {}): Promise<this>;
+    merge(attrs?: {}): Promise<this>;
     saveNew(attrs: any): Promise<this>;
     save(): Promise<this>;
     update(attrs?: {}): Promise<this>;
@@ -121,10 +117,11 @@ export class Model {
     morphTo(typeField?: string, idField?: string): MorphTo;
     morphToMany(RelatedClass: any, morphName: any, pivotTable?: any, foreignKey?: any, relatedKey?: any): MorphToMany;
     morphedByMany(RelatedClass: any, morphName: any, pivotTable?: any, foreignKey?: any, relatedKey?: any): MorphedByMany;
+    load(relations: any): Promise<this>;
     toObject({ relations }?: {
         relations?: boolean;
     }): {};
-    toJSON(): any;
+    toJSON(): {};
     toString(): string;
     serializeDate(date: any): any;
     clone(deep?: boolean): any;
@@ -148,7 +145,6 @@ export class Validator {
     errorBag: {};
     primaryKey: string;
     db: any;
-    _sanitizeInput(data: any): {};
     fails(): Promise<boolean>;
     passes(): boolean;
     getErrors(): {};
@@ -227,6 +223,7 @@ export class Collection extends Array<any> {
     sortByDesc(key: any): Collection;
     mapToArray(fn: any): any[];
     pluck(key: any): Collection;
+    toObject(): any[];
     compact(): Collection;
     flatten(depth?: number): Collection;
     flattenDeep(): Collection;
@@ -253,7 +250,8 @@ export class Collection extends Array<any> {
  * QueryBuilder (Bug-Free)
  *****************************************************************************/
 export class QueryBuilder {
-    constructor(table: any, modelClass?: any);
+    static fromJSON(json: any): QueryBuilder;
+    constructor(table: any, modelClass?: any, dialect?: string);
     table: any;
     tableAlias: any;
     modelClass: any;
@@ -267,11 +265,14 @@ export class QueryBuilder {
     _offset: number;
     _forUpdate: boolean;
     _distinct: boolean;
+    dialect: string;
     _with: any[];
     _ignoreSoftDeletes: boolean;
     _ctes: any[];
     _unions: any[];
     _fromRaw: any;
+    _normalizeOperator(operator: any): any;
+    _isNumericId(value: any): boolean;
     /**************************************************************************
      * BASIC CONFIG
      **************************************************************************/
@@ -290,6 +291,8 @@ export class QueryBuilder {
     leftJoin(t: any, f: any, o: any, s: any): this;
     rightJoin(t: any, f: any, o: any, s: any): this;
     crossJoin(t: any): this;
+    find(value: any, options?: {}): Promise<any>;
+    findOrFail(value: any, options?: {}): Promise<any>;
     /**************************************************************************
      * WHERE HELPERS
      **************************************************************************/
@@ -297,6 +300,14 @@ export class QueryBuilder {
     then(resolve: any, reject: any): Promise<Collection>;
     where(columnOrObject: any, operator: any, value: any, ...args: any[]): this;
     orWhere(columnOrObject: any, operatorOrValue: any, value: any, ...args: any[]): this;
+    toSQL(): string;
+    /**************************************************************************
+     * TO SQL
+     **************************************************************************/
+    toSQL(): {
+        sql: string;
+        bindings: any[];
+    };
     whereRaw(sql: any, bindings?: any[]): this;
     orWhereRaw(sql: any, bindings?: any[]): this;
     whereColumn(a: any, op: any, b: any, ...args: any[]): this;
@@ -351,7 +362,9 @@ export class QueryBuilder {
      * WITH (Eager Load)
      **************************************************************************/
     with(relations: any): this;
+    preload(relations: any): this;
     ignoreSoftDeletes(): this;
+    whereHas(relationName: any, callback: any, boolean?: string): this;
     /**************************************************************************
      * COMPILERS
      **************************************************************************/
@@ -374,13 +387,7 @@ export class QueryBuilder {
     max(c: any): Promise<number>;
     countDistinct(c: any): Promise<number>;
     pluck(col: any): Promise<any>;
-    paginate(page?: number, perPage?: number): Promise<{
-        total: number;
-        perPage: number;
-        page: number;
-        lastPage: number;
-        data: Collection;
-    }>;
+    paginate(page?: number, perPage?: number): Promise<Paginator>;
     /**************************************************************************
      * WRITE METHODS
      **************************************************************************/
@@ -403,10 +410,35 @@ export class QueryBuilder {
     _rehydrateWheres(ws: any): any;
     _rehydrateCTEs(ctes: any): any;
     _rehydrateUnions(unions: any): any;
-    /**************************************************************************
-     * TO SQL
-     **************************************************************************/
-    toSQL(): {
+    toJSON(): {
+        table: any;
+        tableAlias: any;
+        modelClass: any;
+        dialect: string;
+        select: string[];
+        joins: any[];
+        wheres: any[];
+        group: any[];
+        having: any[];
+        orders: any[];
+        limit: number;
+        offset: number;
+        distinct: boolean;
+        forUpdate: boolean;
+        with: any[];
+        ignoreSoftDeletes: boolean;
+        ctes: {
+            name: any;
+            recursive: any;
+            query: any;
+        }[];
+        unions: {
+            type: any;
+            query: any;
+        }[];
+        fromRaw: any;
+    };
+    toSQLJSON(): {
         sql: string;
         bindings: any[];
     };
@@ -494,90 +526,6 @@ export class BaseModel extends Model {
      */
     serialize(): {};
 }
-/**
- * @typedef {Object} DateTimeOptions
- * @property {string} [zone]
- * @property {string} [locale]
- */
-export class DateTime {
-    static now(opts?: {}): DateTime;
-    static fromJSDate(jsDate: any, opts?: {}): DateTime;
-    static fromMillis(ms: any, opts?: {}): DateTime;
-    static fromISO(iso: any, opts?: {}): DateTime;
-    static fromObject(obj?: {}): DateTime;
-    static fromFormat(str: any, fmt: any, opts?: {}): DateTime;
-    /**
-     * @param {Date|string|number} date
-     * @param {DateTimeOptions} [options]
-     */
-    constructor(date: Date | string | number, { zone, locale }?: DateTimeOptions);
-    _date: Date;
-    zone: string;
-    locale: string;
-    toJSDate(): Date;
-    toMillis(): number;
-    toUTC(): DateTime;
-    toLocal(): DateTime;
-    setZone(zone: any): DateTime;
-    setLocale(locale: any): DateTime;
-    plus(dur: any): DateTime;
-    minus(dur: any): DateTime;
-    diff(other: any): Duration;
-    toISO(): string;
-    toISOString(): string;
-    toFormat(fmtStr: any): string;
-    startOf(unit: any): DateTime;
-    endOf(unit: any): DateTime;
-    _getParts(): {};
-    year(): any;
-    month(): any;
-    day(): any;
-    hour(): any;
-    minute(): any;
-    second(): any;
-    millisecond(): any;
-    equals(other: any): boolean;
-}
-export class Duration {
-    static fromObject(obj?: {}): Duration;
-    static fromMillis(ms: any): Duration;
-    constructor({ milliseconds, seconds, minutes, hours, days }?: {
-        milliseconds?: number;
-        seconds?: number;
-        minutes?: number;
-        hours?: number;
-        days?: number;
-    });
-    millis: number;
-    plus(other: any): Duration;
-    minus(other: any): Duration;
-    as(unit?: string): number;
-    toISO(): string;
-}
-export class Interval {
-    static fromDateTimes(start: any, end: any): Interval;
-    static after(start: any, dur: any): Interval;
-    static before(end: any, dur: any): Interval;
-    constructor(start: any, end: any);
-    start: DateTime;
-    end: DateTime;
-    length(): Duration;
-    contains(dt: any): boolean;
-    overlaps(other: any): boolean;
-    merge(other: any): Interval;
-}
-export namespace Info {
-    /**
-     * @param {InfoOptions} [options]
-     */
-    function months({ locale }?: InfoOptions): string[];
-    /**
-     * @param {InfoOptions} [options]
-     */
-    function weekdays({ locale }?: InfoOptions): string[];
-    function timeZones(): string[];
-}
-export function parseFromFormat(input: any, fmt: any): Date;
 declare class SimpleCache {
     map: Map<any, any>;
     get(k: any): any;
@@ -617,6 +565,22 @@ declare class MorphToMany extends Relation {
 declare class MorphedByMany extends MorphToMany {
 }
 import util = require("util");
+declare class Paginator {
+    constructor(data: any, total: any, page: any, perPage: any);
+    data: any;
+    total: number;
+    page: number;
+    perPage: number;
+    lastPage: number;
+    _dataToArray(): any;
+    toJSON(): {
+        data: any;
+        total: number;
+        page: number;
+        perPage: number;
+        lastPage: number;
+    };
+}
 declare class Relation {
     constructor(parent: any, relatedClass: any, foreignKey?: any, localKey?: any);
     parent: any;
