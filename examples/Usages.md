@@ -22,7 +22,7 @@ const firstOrFail = await User.where('name', 'Alice').firstOrFail();
 
 const user = await User.findBy('email', 'jane@example.com');
 // by default Field password is Auto encrypted when creating
-const isValid = await user.checkPassword(password);
+const isValid = await user.checkPassword('user_input_password');
 // Delete (soft delete if enabled)
 await user.delete();
 
@@ -124,9 +124,13 @@ const user = await User.find(2);
 const roles = await user.roles().get();
 
 // Eager load with Relations:
-const usersWithRoles = await User.query().with('roles').get();
+const usersWithRoles = await User.query().with('roles').get();// or .preload('roles')
 
 // Eager load with Many to Many Relations:
 const usersWith_Roles_posts_comments = await User.query().with(['roles', 'posts', 'comments' ]).get();
+// or .preload() 
 //OR with Many to Many Relations:
 const users_With_Roles_posts_comments = await User.with(['roles', 'posts', 'comments' ]).get();
+
+const port = await Portfolio.find(req.params.slug);
+const portfolio = await port.load('category');
