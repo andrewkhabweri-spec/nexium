@@ -374,7 +374,7 @@ const escapeId = (s) => DB.escapeId(s);
 // -----------------------------
 class Validator {
   constructor(data = {}, id = null, table = null, rules = {}, customMessages = {}, db = null) {
-    this.data = data || {};
+    this.data = data;
     this.id = id === undefined || id === null ? null : id;
     this.table = table || null;
     this.rules = rules || {};
@@ -382,29 +382,7 @@ class Validator {
     this.errorBag = {};
     this.primaryKey = 'id';
     this.db = db || (typeof DB !== 'undefined' ? DB : null);
-  }
 
-  // -----------------------------
-  // SANITIZATION
-  // -----------------------------
-  _sanitizeInput(data) {
-    const sanitized = {};
-    for (let key in data) {
-      let val = data[key];
-
-      // Trim strings
-      if (typeof val === 'string') val = val.trim();
-
-      // Normalize booleans
-      if (val === 'true' || val === 1 || val === '1') val = true;
-      if (val === 'false' || val === 0 || val === '0') val = false;
-
-      // Normalize numeric strings
-      if (!isNaN(val) && val !== '' && typeof val !== 'boolean') val = Number(val);
-
-      sanitized[key] = val;
-    }
-    return sanitized;
   }
 
   // -----------------------------
@@ -415,44 +393,46 @@ class Validator {
 
     for (const field in this.rules) {
       let rulesArray = this.rules[field];
-      const hasField = field in this.data;
-      const value = this.data[field];
 
       if (typeof rulesArray === 'string') rulesArray = rulesArray.split('|');
-      if (!Array.isArray(rulesArray)) throw new Error(`Rules for field "${field}" must be array/string.`);
+      else if (!Array.isArray(rulesArray)) {
+        this.addError(field, `Rules for field "${field}" must be string or array.`);
+        continue;
+      }
 
-      const isSometimes = rulesArray.includes('sometimes');
       const isNullable = rulesArray.includes('nullable');
+      rulesArray = rulesArray.filter(r => r !== 'nullable');
 
-      rulesArray = rulesArray.filter(r => r !== 'sometimes' && r !== 'nullable');
+      if (rulesArray.includes('sometimes')) {
+        rulesArray = rulesArray.filter(r => r !== 'sometimes');
+        if (!this.data.hasOwnProperty(field)) continue;
+      }
 
-      // 1️⃣ Sometimes: skip entirely if field not present
-      if (isSometimes && !hasField) continue;
+      if (isNullable && (this.data[field] === '' || this.data[field] === null || this.data[field] === undefined)) continue;
 
-      // 2️⃣ Nullable: skip rules if value empty
-      const isEmpty = value === null || value === undefined || value === '' || (typeof value === 'string' && value.trim() === '');
-      if (isNullable && isEmpty) continue;
-
-      // 3️⃣ Validate remaining rules
       for (let rule of rulesArray) {
         const [ruleName, ...paramParts] = rule.split(':');
-        const paramRaw = paramParts.join(':');
-        const params = paramRaw ? paramRaw.split(',') : [];
+        const param = paramParts.join(':');
+        const params = param ? param.split(',') : [];
 
-        const methodName = `validate${ruleName.charAt(0).toUpperCase() + ruleName.slice(1)}`;
-        if (typeof this[methodName] !== 'function') throw new Error(`Validation rule "${ruleName}" does not exist.`);
+        const method = `validate${ruleName.charAt(0).toUpperCase() + ruleName.slice(1)}`;
+        
+        try {
+          if (typeof this[method] !== 'function') {
+            this.addError(field, `Validation rule "${ruleName}" does not exist.`);
+            continue;
+          }
 
-        if (['unique', 'exists'].includes(ruleName)) {
-          await this[methodName](field, ...params);
-        } else {
-          this[methodName](field, ...params);
+          if (['unique', 'exists'].includes(ruleName)) await this[method](field, ...params);
+          else this[method](field, ...params);
+        } catch (err) {
+          this.addError(field, `Error validating ${field} with ${ruleName}: ${err.message}`);
         }
       }
     }
 
     return Object.keys(this.errorBag).length > 0;
   }
-
 
   passes() {
     return !Object.keys(this.errorBag).length;
@@ -522,60 +502,44 @@ class Validator {
   }
 
   validateMin(field, min) {
-    const value = this.data[field];
-    min = Number(min);
+    const val = this.data[field];
+    if (val === undefined || val === null || val === '') return; // skip nullable
 
-    // number
-    if (!isNaN(value)) {
-      if (Number(value) < min) {
-        this.addError(field, this.msg(field, 'min', `${field} must be at least ${min}`));
+    // Ensure min is numeric
+    const limit = Math.max(...[min].flat().map(Number));
+
+    // For strings or arrays, use length
+    if (typeof val === 'string' || Array.isArray(val)) {
+      if (val.length < limit) {
+        this.addError(field, 'min', `${field} must be at least ${limit} characters.`);
       }
-      return;
     }
-    // array
-    if (Array.isArray(value)) {
-      if (value.length < min) {
-        this.addError(
-          field,
-          this.msg(field, 'min', `${field} must contain at least ${min} item(s)`)
-        );
+    // For numbers, compare numerically
+    else if (!isNaN(Number(val))) {
+      if (Number(val) < limit) {
+        this.addError(field, 'min', `${field} must be at least ${limit}.`);
       }
-      return;
-    }
-    // string
-    if (String(value).length < min) {
-      this.addError(field, this.msg(field, 'min', `${field} must be at least ${min} characters`));
     }
   }
 
-
-
   validateMax(field, max) {
-    const value = this.data[field];
-    max = Number(max);
+    const val = this.data[field];
+    if (val === undefined || val === null || val === '') return; // skip nullable
 
-    // number
-    if (!isNaN(value)) {
-      if (Number(value) > max) {
-        this.addError(field, this.msg(field, 'max', `${field} must not exceed ${max}`));
+    // Ensure max is numeric
+    const limit = Math.min(...[max].flat().map(Number));
+
+    // For strings or arrays, use length
+    if (typeof val === 'string' || Array.isArray(val)) {
+      if (val.length > limit) {
+        this.addError(field, 'max', `${field} must be no more than ${limit} characters.`);
       }
-      return;
     }
-
-    // array
-    if (Array.isArray(value)) {
-      if (value.length > max) {
-        this.addError(
-          field,
-          this.msg(field, 'max', `${field} must not contain more than ${max} item(s)`)
-        );
+    // For numbers, compare numerically
+    else if (!isNaN(Number(val))) {
+      if (Number(val) > limit) {
+        this.addError(field, 'max', `${field} must be no more than ${limit}.`);
       }
-      return;
-    }
-
-    // string
-    if (String(value).length > max) {
-      this.addError(field, this.msg(field, 'max', `${field} must not exceed ${max} characters`));
     }
   }
 
@@ -834,620 +798,6 @@ class Validator {
   }
 }
 
-
-// Lightweight date/time utilities — cleaned & production-ready
-// Exports: { DateTime, Duration, Interval, Info, parseFromFormat }
-
-'use strict';
-
-// ============================================================================
-// UTILITIES
-// ============================================================================
-const _isNumber = (v) => typeof v === 'number' && !Number.isNaN(v);
-
-function _normalizeZone(zone) {
-  if (!zone || zone === 'local') {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  }
-  if (String(zone).toLowerCase() === 'utc') return 'UTC';
-  return String(zone);
-}
-
-const pad = (num, len = 2) => String(num).padStart(len, '0');
-
-// ============================================================================
-// DURATION
-// ============================================================================
-class Duration {
-  constructor({ milliseconds = 0, seconds = 0, minutes = 0, hours = 0, days = 0 } = {}) {
-    this.millis =
-      Number(milliseconds) +
-      Number(seconds) * 1000 +
-      Number(minutes) * 60000 +
-      Number(hours) * 3600000 +
-      Number(days) * 86400000;
-    if (!Number.isFinite(this.millis)) throw new Error('Invalid Duration values');
-    Object.freeze(this);
-  }
-
-  static fromObject(obj = {}) {
-    return new Duration(obj);
-  }
-
-  static fromMillis(ms) {
-    return new Duration({ milliseconds: ms });
-  }
-
-  plus(other) {
-    const dur = other instanceof Duration ? other : Duration.fromObject(other);
-    return Duration.fromMillis(this.millis + dur.millis);
-  }
-
-  minus(other) {
-    const dur = other instanceof Duration ? other : Duration.fromObject(other);
-    return Duration.fromMillis(this.millis - dur.millis);
-  }
-
-  as(unit = 'milliseconds') {
-    switch (unit) {
-      case 'milliseconds':
-        return this.millis;
-      case 'seconds':
-        return this.millis / 1000;
-      case 'minutes':
-        return this.millis / 60000;
-      case 'hours':
-        return this.millis / 3600000;
-      case 'days':
-        return this.millis / 86400000;
-      default:
-        throw new Error('Unsupported Duration unit: ' + unit);
-    }
-  }
-
-  toISO() {
-    // ISO-like "PT<n.nnn>S"
-    const seconds = this.millis / 1000;
-    return `PT${seconds.toFixed(3)}S`;
-  }
-}
-
-// ============================================================================
-// FORMAT TOKENS
-// ============================================================================
-const FORMAT_TOKENS = {
-  yyyy: /\d{4}/,
-  yy: /\d{2}/,
-  MM: /\d{2}/,
-  M: /\d{1,2}/,
-  dd: /\d{2}/,
-  d: /\d{1,2}/,
-  HH: /\d{2}/,
-  H: /\d{1,2}/,
-  hh: /\d{2}/,
-  h: /\d{1,2}/,
-  mm: /\d{2}/,
-  ss: /\d{2}/,
-  SSS: /\d{1,3}/,
-  a: /(AM|PM)/i,
-  ZZ: /[+-]\d{2}:\d{2}/, // +02:00
-  Z: /[+-]\d{4}/ // +0200
-};
-
-// map tokens to internal keys used by parseFromFormat
-const TOKEN_MAP = {
-  yyyy: 'year',
-  yy: 'year2',
-  MM: 'month',
-  M: 'month',
-  dd: 'day',
-  d: 'day',
-  HH: 'hour24',
-  H: 'hour24',
-  hh: 'hour12',
-  h: 'hour12',
-  mm: 'minute',
-  ss: 'second',
-  SSS: 'millisecond',
-  a: 'ampm',
-  Z: 'offset',
-  ZZ: 'offset'
-};
-
-// create token list sorted by length descending so longer tokens match first
-const TOKEN_KEYS_SORTED = Object.keys(FORMAT_TOKENS).sort((a, b) => b.length - a.length);
-
-// ============================================================================
-// PARSER
-// ============================================================================
-function parseFromFormat(input, fmt) {
-  if (typeof input !== 'string' || typeof fmt !== 'string') throw new Error('parseFromFormat expects strings');
-  let ptrInput = 0;
-  let ptrFmt = 0;
-  const out = {};
-
-  while (ptrFmt < fmt.length) {
-    // find token that matches the substring of fmt at ptrFmt
-    const token = TOKEN_KEYS_SORTED.find((t) => fmt.startsWith(t, ptrFmt));
-    if (token) {
-      const regex = new RegExp('^' + FORMAT_TOKENS[token].source);
-      const slice = input.slice(ptrInput);
-      const match = slice.match(regex);
-      if (!match) {
-        throw new Error(`Invalid ${token} in "${input}" (expected ${FORMAT_TOKENS[token]})`);
-      }
-      const val = match[0];
-      ptrInput += val.length;
-      ptrFmt += token.length;
-      const key = TOKEN_MAP[token];
-      out[key] = val;
-      continue;
-    }
-
-    // literal character: must match exactly
-    const expectedChar = fmt[ptrFmt];
-    const actualChar = input[ptrInput];
-    if (actualChar !== expectedChar) {
-      // include context in message
-      throw new Error(
-        `Unexpected character at position ${ptrInput}: expected "${expectedChar}" got "${actualChar || 'end-of-string'}"`
-      );
-    }
-    ptrFmt += 1;
-    ptrInput += 1;
-  }
-
-  if (ptrInput !== input.length) {
-    // leftover characters in input
-    throw new Error(`Extra characters in input starting at position ${ptrInput}`);
-  }
-
-  // Build components (defaults)
-  const year = out.year ? Number(out.year) : out.year2 ? 2000 + Number(out.year2) : new Date().getUTCFullYear();
-  const month = out.month ? Number(out.month) : 1;
-  const day = out.day ? Number(out.day) : 1;
-
-  let hour = 0;
-  if (out.hour24 !== undefined) hour = Number(out.hour24);
-  if (out.hour12 !== undefined) {
-    const h = Number(out.hour12);
-    const isPM = (out.ampm || '').toUpperCase() === 'PM';
-    hour = (h % 12) + (isPM ? 12 : 0);
-  }
-
-  const minute = out.minute ? Number(out.minute) : 0;
-  const second = out.second ? Number(out.second) : 0;
-  const ms = out.millisecond ? Number(out.millisecond) : 0;
-
-  // parse offset (Z or ZZ)
-  let zoneOffsetMinutes = 0;
-  if (out.offset) {
-    // support both +0200 and +02:00
-    const o = out.offset.replace(':', '');
-    const sign = o[0] === '-' ? -1 : 1;
-    const hh = Number(o.slice(1, 3)) || 0;
-    const mm = Number(o.slice(3, 5)) || 0;
-    zoneOffsetMinutes = sign * (hh * 60 + mm);
-  }
-
-  // Create UTC instant from parsed values and offset.
-  // Components are interpreted as values in the offset timezone; convert to UTC instant.
-  const utcMillisOfLocal = Date.UTC(year, month - 1, day, hour, minute, second, ms);
-  const final = utcMillisOfLocal - zoneOffsetMinutes * 60000;
-  return new Date(final);
-}
-
-// ============================================================================
-// DATETIME
-// ============================================================================
-/**
- * @typedef {Object} DateTimeOptions
- * @property {string} [zone]
- * @property {string} [locale]
- */
-class DateTime {
-  /**
-   * @param {Date|string|number} date
-   * @param {DateTimeOptions} [options]
-   */
-  constructor(date, { zone = 'local', locale } = {}) {
-    let jsDate = date instanceof Date ? new Date(date.valueOf()) : new Date(date);
-    if (Number.isNaN(jsDate.valueOf())) throw new Error('Invalid Date');
-
-    this._date = new Date(jsDate.valueOf());
-    this.zone = _normalizeZone(zone);
-    this.locale = locale;
-
-    Object.freeze(this);
-  }
-
-  static now(opts = {}) {
-    return new DateTime(new Date(), opts);
-  }
-  static fromJSDate(jsDate, opts = {}) {
-    return new DateTime(jsDate, opts);
-  }
-  static fromMillis(ms, opts = {}) {
-    return new DateTime(new Date(Number(ms)), opts);
-  }
-  static fromISO(iso, opts = {}) {
-    const ms = Date.parse(iso);
-    if (Number.isNaN(ms)) throw new Error('Invalid ISO string');
-    return new DateTime(new Date(ms), opts);
-  }
-
-  static fromObject(obj = {}) {
-    // Treat provided components as UTC components.
-    const {
-      year = 1970,
-      month = 1,
-      day = 1,
-      hour = 0,
-      minute = 0,
-      second = 0,
-      millisecond = 0,
-      zone = 'UTC',
-      locale
-    } = obj;
-    const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
-    return new DateTime(d, { zone, locale });
-  }
-
-  static fromFormat(str, fmt, opts = {}) {
-    const d = parseFromFormat(str, fmt);
-    return new DateTime(d, opts);
-  }
-
-  toJSDate() {
-    return new Date(this._date.valueOf());
-  }
-  toMillis() {
-    return this._date.valueOf();
-  }
-  toUTC() {
-    return this.setZone('UTC');
-  }
-  toLocal() {
-    return this.setZone('local');
-  }
-
-  setZone(zone) {
-    const z = _normalizeZone(zone);
-    if (z === this.zone) return this;
-    return new DateTime(this._date, { zone: z, locale: this.locale });
-  }
-
-  setLocale(locale) {
-    if (locale === this.locale) return this;
-    return new DateTime(this._date, { zone: this.zone, locale });
-  }
-
-  plus(dur) {
-    const d = dur instanceof Duration ? dur : Duration.fromObject(dur);
-    return DateTime.fromMillis(this.toMillis() + d.millis, { zone: this.zone, locale: this.locale });
-  }
-
-  minus(dur) {
-    const d = dur instanceof Duration ? dur : Duration.fromObject(dur);
-    return DateTime.fromMillis(this.toMillis() - d.millis, { zone: this.zone, locale: this.locale });
-  }
-
-  diff(other) {
-    const ms =
-      other instanceof DateTime ? other.toMillis() : DateTime.fromJSDate(new Date(other)).toMillis();
-    return Duration.fromMillis(this.toMillis() - ms);
-  }
-
-  toISO() {
-    return new Date(this._date.valueOf()).toISOString();
-  }
-  toISOString() {
-    return this.toISO();
-  }
-
-  // -----------------------------
-  // toFormat (supports most common tokens)
-  // -----------------------------
-  toFormat(fmtStr) {
-    if (typeof fmtStr !== 'string') throw new Error('toFormat expects a format string');
-
-    const d = this._date;
-
-    // 24hr parts
-    const parts24 = new Intl.DateTimeFormat(this.locale || 'en', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-      fractionalSecondDigits: 3,
-      timeZone: this.zone
-    }).formatToParts(d);
-
-    // 12hr parts
-    const parts12 = new Intl.DateTimeFormat(this.locale || 'en', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true,
-      timeZone: this.zone
-    }).formatToParts(d);
-
-    const map = {};
-    for (const p of parts24) {
-      if (p.type === 'literal') continue;
-      // keep strings here (formatToParts returns strings)
-      map[p.type] = p.value;
-    }
-    // add dayPeriod from 12hr parts if present
-    for (const p of parts12) {
-      if (p.type === 'dayPeriod') map.dayPeriod = p.value;
-      if (p.type === 'hour' && !map['hour12']) map['hour12'] = p.value;
-    }
-
-    const hour24 = map.hour || '00';
-    const hour12 = map.hour12 || '12';
-    const minute = map.minute || '00';
-    const second = map.second || '00';
-
-    // fractionalSecond may be present (string like "123")
-    const frac = map.fractionalSecond !== undefined ? map.fractionalSecond : null;
-    const ssMill = frac !== null ? String(frac).padStart(3, '0') : String(d.getUTCMilliseconds()).padStart(3, '0');
-
-    const safeMap = {
-      yyyy: map.year || String(new Date(d.valueOf()).getUTCFullYear()),
-      yy: (map.year || String(new Date(d.valueOf()).getUTCFullYear())).slice(-2),
-      MM: map.month || '01',
-      M: String(Number(map.month || '1')),
-      dd: map.day || '01',
-      d: String(Number(map.day || '1')),
-      HH: hour24,
-      H: String(Number(hour24)),
-      hh: hour12,
-      h: String(Number(hour12)),
-      mm: minute,
-      ss: second,
-      SSS: ssMill,
-      a: (map.dayPeriod || 'AM').toUpperCase()
-    };
-
-    // Replace tokens — the regex orders tokens by length implicitly due to alternation
-    return fmtStr.replace(/yyyy|yy|MM|M|dd|d|HH|H|hh|h|mm|ss|SSS|a/g, (t) => safeMap[t]);
-  }
-
-  // -----------------------------
-  // startOf / endOf (UTC-based arithmetic)
-  // zone is only used for formatting; arithmetic is on the instant (UTC).
-  // -----------------------------
-  startOf(unit) {
-    const ms = this.toMillis();
-    const dt = new Date(ms); // UTC instant
-    const res = new Date(dt.valueOf());
-
-    switch (unit) {
-      case 'year':
-        res.setUTCFullYear(res.getUTCFullYear(), 0, 1);
-        res.setUTCHours(0, 0, 0, 0);
-        break;
-      case 'month':
-        res.setUTCDate(1);
-        res.setUTCHours(0, 0, 0, 0);
-        break;
-      case 'week': {
-        // Week starts on Sunday (0)
-        const day = res.getUTCDay(); // 0..6
-        res.setUTCDate(res.getUTCDate() - day);
-        res.setUTCHours(0, 0, 0, 0);
-        break;
-      }
-      case 'day':
-        res.setUTCHours(0, 0, 0, 0);
-        break;
-      case 'hour':
-        res.setUTCMinutes(0, 0, 0);
-        break;
-      case 'minute':
-        res.setUTCSeconds(0, 0);
-        break;
-      case 'second':
-        res.setUTCMilliseconds(0);
-        break;
-      default:
-        throw new Error('Invalid unit for startOf: ' + unit);
-    }
-    return new DateTime(res, { zone: this.zone, locale: this.locale });
-  }
-
-  endOf(unit) {
-    // compute startOf next unit and subtract 1 ms
-    let startNext;
-    switch (unit) {
-      case 'year':
-        // first instant of next year
-        startNext = new Date(Date.UTC(this.year() + 1, 0, 1, 0, 0, 0, 0));
-        startNext = new DateTime(startNext, { zone: this.zone, locale: this.locale });
-        break;
-      case 'month': {
-        // first instant of next month
-        // month() returns 1..12, Date.UTC month is zero-based so use this.month() as the *next* month index
-        const y = this.year();
-        const m = this.month(); // 1..12
-        // Date.UTC expects zero-based month; m is 1..12 so using m gives next month index (0-based).
-        startNext = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0));
-        startNext = new DateTime(startNext, { zone: this.zone, locale: this.locale });
-        break;
-      }
-      case 'week':
-        startNext = this.startOf('week').plus({ days: 7 });
-        break;
-      case 'day':
-        startNext = this.startOf('day').plus({ days: 1 });
-        break;
-      case 'hour':
-        startNext = this.startOf('hour').plus({ hours: 1 });
-        break;
-      case 'minute':
-        startNext = this.startOf('minute').plus({ minutes: 1 });
-        break;
-      case 'second':
-        startNext = this.startOf('second').plus({ seconds: 1 });
-        break;
-      default:
-        throw new Error('Invalid unit for endOf: ' + unit);
-    }
-
-    return DateTime.fromMillis(startNext.toMillis() - 1, { zone: this.zone, locale: this.locale });
-  }
-
-  _getParts() {
-    // returns numeric parts (localized to configured zone using Intl)
-    const parts = new Intl.DateTimeFormat(this.locale || 'en', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-      fractionalSecondDigits: 3,
-      hour12: false,
-      timeZone: this.zone
-    }).formatToParts(this._date);
-
-    const obj = {};
-    for (const p of parts) {
-      if (p.type === 'literal') continue;
-      if (p.type === 'fractionalSecond') {
-        obj[p.type] = Number(p.value);
-      } else if (/^\d+$/.test(p.value)) {
-        obj[p.type] = Number(p.value);
-      } else {
-        // non-numeric (like dayPeriod) skip or keep as-is if desired
-      }
-    }
-    return obj;
-  }
-
-  // convenience getters (obtained using formatToParts in configured zone)
-  year() {
-    return this._getParts().year;
-  }
-  month() {
-    return this._getParts().month;
-  }
-  day() {
-    return this._getParts().day;
-  }
-  hour() {
-    return this._getParts().hour;
-  }
-  minute() {
-    return this._getParts().minute;
-  }
-  second() {
-    return this._getParts().second;
-  }
-  millisecond() {
-    return this._getParts().fractionalSecond || 0;
-  }
-  equals(other) {
-    return other instanceof DateTime && this.toMillis() === other.toMillis();
-  }
-}
-
-// ============================================================================
-// INTERVAL
-// ============================================================================
-class Interval {
-  constructor(start, end) {
-    if (!(start instanceof DateTime) || !(end instanceof DateTime)) {
-      throw new Error('Interval requires DateTime start and end');
-    }
-    if (start.toMillis() > end.toMillis()) {
-      throw new Error('Interval start must be <= end');
-    }
-    this.start = start;
-    this.end = end;
-    Object.freeze(this);
-  }
-
-  static fromDateTimes(start, end) {
-    return new Interval(start, end);
-  }
-
-  static after(start, dur) {
-    const d = dur instanceof Duration ? dur : Duration.fromObject(dur);
-    return new Interval(start, start.plus(d));
-  }
-
-  static before(end, dur) {
-    const d = dur instanceof Duration ? dur : Duration.fromObject(dur);
-    return new Interval(end.minus(d), end);
-  }
-
-  length() {
-    return Duration.fromMillis(this.end.toMillis() - this.start.toMillis());
-  }
-
-  contains(dt) {
-    const ms = dt instanceof DateTime ? dt.toMillis() : DateTime.fromJSDate(new Date(dt)).toMillis();
-    return this.start.toMillis() <= ms && ms <= this.end.toMillis();
-  }
-
-  overlaps(other) {
-    if (!(other instanceof Interval)) throw new Error('overlaps expects Interval');
-    return this.start.toMillis() <= other.end.toMillis() && other.start.toMillis() <= this.end.toMillis();
-  }
-
-  merge(other) {
-    if (!this.overlaps(other)) throw new Error('Cannot merge non-overlapping intervals');
-    const start = this.start.toMillis() < other.start.toMillis() ? this.start : other.start;
-    const end = this.end.toMillis() > other.end.toMillis() ? this.end : other.end;
-    return new Interval(start, end);
-  }
-}
-
-// ============================================================================
-// INFO
-// ============================================================================
-/**
- * @typedef {Object} InfoOptions
- * @property {string} [locale]
- */
-const Info = {
-  /**
-   * @param {InfoOptions} [options]
-   */
-  months({ locale } = {}) {
-    const fmt = new Intl.DateTimeFormat(locale || 'en', {
-      month: 'long',
-      timeZone: 'UTC'
-    });
-    return Array.from({ length: 12 }, (_, i) =>
-      fmt.format(new Date(Date.UTC(2000, i, 1)))
-    );
-  },
-
-  /**
-   * @param {InfoOptions} [options]
-   */
-  weekdays({ locale } = {}) {
-    const fmt = new Intl.DateTimeFormat(locale || 'en', {
-      weekday: 'long',
-      timeZone: 'UTC'
-    });
-    return Array.from({ length: 7 }, (_, i) =>
-      fmt.format(new Date(Date.UTC(1970, 0, 4 + i)))
-    );
-  },
-
-  timeZones() {
-    return [Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'];
-  }
-};
-
-
 // ------------------------------------------------------------
 // Collection Class (Safe Array Extension)
 // ------------------------------------------------------------
@@ -1546,6 +896,10 @@ class Collection extends Array {
 
   pluck(key) {
     return new Collection(this.map(item => item?.[key]));
+  }
+
+  toObject() {
+    return this.toArray().map(item => item.toObject ? item.toObject() : { ...item });
   }
 
   compact() {
@@ -1710,12 +1064,60 @@ class Collection extends Array {
   }
 }
 
+// Simple Paginator class — returns JSON-friendly output
+class Paginator {
+  constructor(data, total, page, perPage) {
+    this.data = data;         // likely a Collection or Array
+    this.total = Number(total) || 0;
+    this.page = Math.max(1, Number(page));
+    this.perPage = Math.max(1, Number(perPage));
+    this.lastPage = Math.max(1, Math.ceil(this.total / this.perPage));
+  }
 
+  // try common conversions: Collection -> array, toJSON, toArray, or fallback
+  _dataToArray() {
+    const d = this.data;
+
+    // If it's already a plain array
+    if (Array.isArray(d)) return d;
+
+    // If object has toJSON()
+    if (d && typeof d.toJSON === 'function') {
+      try { return d.toJSON(); } catch(e) { /* fallthrough */ }
+    }
+
+    // If object has toArray()
+    if (d && typeof d.toArray === 'function') {
+      try { return d.toArray(); } catch(e) { /* fallthrough */ }
+    }
+
+    // If it's iterable (like a Collection), try Array.from
+    try {
+      return Array.from(d);
+    } catch (e) { /* fallthrough */ }
+
+    // Last resort: return as single-item array
+    return [d];
+  }
+
+  toJSON() {
+    return {
+      data: this._dataToArray(),
+      total: this.total,
+      page: this.page,
+      perPage: this.perPage,
+      lastPage: this.lastPage
+    };
+  }
+}
+
+
+const VALID_OPERATORS = ['=', '<', '<=', '>', '>=', '<>', '!=', 'LIKE', 'ILIKE'];
 /******************************************************************************
  * QueryBuilder (Bug-Free)
  *****************************************************************************/
 class QueryBuilder {
-  constructor(table, modelClass = null) {
+  constructor(table, modelClass = null, dialect = 'mysql') {
     this.table = table;
     this.tableAlias = null;
     this.modelClass = modelClass;
@@ -1730,6 +1132,7 @@ class QueryBuilder {
     this._offset = null;
     this._forUpdate = false;
     this._distinct = false;
+    this.dialect = dialect;
 
     this._with = [];
     this._ignoreSoftDeletes = false;
@@ -1738,6 +1141,29 @@ class QueryBuilder {
     this._unions = [];
     this._fromRaw = null;
   }
+
+  // Helper to normalize operator
+  _normalizeOperator(operator) {
+    const op = operator ? operator.toUpperCase() : '=';
+    if (!VALID_OPERATORS.includes(op)) {
+      throw new Error(`Invalid SQL operator: ${operator}`);
+    }
+
+    // Convert ILIKE to proper operator for MySQL
+    if (op === 'ILIKE' && this.dialect === 'mysql') {
+      return 'LIKE';
+    }
+
+    return op;
+  }
+
+  _isNumericId(value) {
+    return (
+      typeof value === 'number' ||
+      (typeof value === 'string' && /^[0-9]+$/.test(value))
+    );
+  }
+
 
   /**************************************************************************
    * BASIC CONFIG
@@ -1789,6 +1215,49 @@ class QueryBuilder {
   rightJoin(t, f, o, s) { return this.join('RIGHT', t, f, o, s); }
   crossJoin(t) { return this.join('CROSS', t, null, null, null); }
 
+  async find(value, options = {}) {
+    if (value == null) return null;
+
+    const pk =
+      options.primaryKey ||
+      this.modelClass?.primaryKey ||
+      'id';
+
+    const slugKey =
+      options.slugKey ||
+      this.modelClass?.slugKey ||
+      'slug';
+
+    const q = this._clone();
+
+    // Array → whereIn(id)
+    if (Array.isArray(value)) {
+      q.whereIn(pk, value);
+      return q.get();
+    }
+
+    // Numeric → primary key
+    if (this._isNumericId(value)) {
+      q.where(pk, value);
+    } else {
+      // String → slug
+      q.where(slugKey, value);
+    }
+
+    return q.first();
+  }
+
+  async findOrFail(value, options = {}) {
+    const record = await this.find(value, options);
+    if (!record) {
+      throw new Error(
+        `${this.modelClass?.name || 'Record'} not found`
+      );
+    }
+    return record;
+  }
+
+
   /**************************************************************************
    * WHERE HELPERS
    **************************************************************************/
@@ -1806,42 +1275,42 @@ class QueryBuilder {
     return this.get().then(resolve, reject);
   }
 
-  where(columnOrObject, operator, value) {
 
-    // object-form where({a:1, b:2})
-    if (typeof columnOrObject === "object" && columnOrObject !== null) {
+  where(columnOrObject, operator, value) {
+    if (typeof columnOrObject === 'function') {
+      columnOrObject(this);
+      return this;
+    }
+
+    if (typeof columnOrObject === 'object' && columnOrObject !== null) {
       let query = this;
       for (const [col, val] of Object.entries(columnOrObject)) {
-        query = query.where(col, val); 
+        query = query.where(col, val);
       }
       return query;
     }
 
-    // 2 arguments: where(col, value)
     if (arguments.length === 2) {
-      return this._pushWhere({
-        type: 'basic',
-        column: columnOrObject,
-        operator: '=',
-        value: operator,
-        bindings: [operator]
-      });
+      value = operator;
+      operator = '=';
     }
 
-    // 3 arguments
+    const op = this._normalizeOperator(operator);
+
+    // For MySQL + LIKE case-insensitive, wrap with LOWER()
+    const useLower = this.dialect === 'mysql' && operator.toUpperCase() === 'ILIKE';
     return this._pushWhere({
       type: 'basic',
-      column: columnOrObject,
-      operator,
-      value,
-      bindings: [value]
+      boolean: 'AND',
+      column: useLower ? `LOWER(${columnOrObject})` : columnOrObject,
+      operator: op,
+      value: useLower ? value.toLowerCase() : value,
+      bindings: [useLower ? value.toLowerCase() : value],
     });
   }
 
   orWhere(columnOrObject, operatorOrValue, value) {
-
-    // object-form: orWhere({ a:1, b:2 })
-    if (typeof columnOrObject === "object" && columnOrObject !== null) {
+    if (typeof columnOrObject === 'object' && columnOrObject !== null) {
       let query = this;
       for (const [col, val] of Object.entries(columnOrObject)) {
         query = query.orWhere(col, val);
@@ -1849,28 +1318,34 @@ class QueryBuilder {
       return query;
     }
 
-    // 2-arguments form: orWhere(col, value)
     if (arguments.length === 2) {
-      return this._pushWhere({
-        type: 'basic',
-        boolean: 'OR',
-        column: columnOrObject,
-        operator: '=',
-        value: operatorOrValue,
-        bindings: [operatorOrValue]
-      });
+      value = operatorOrValue;
+      operatorOrValue = '=';
     }
 
-    // 3-arguments form
+    const op = this._normalizeOperator(operatorOrValue);
+
+    const useLower = this.dialect === 'mysql' && operatorOrValue.toUpperCase() === 'ILIKE';
     return this._pushWhere({
       type: 'basic',
       boolean: 'OR',
-      column: columnOrObject,
-      operator: operatorOrValue,
-      value,
-      bindings: [value]
+      column: useLower ? `LOWER(${columnOrObject})` : columnOrObject,
+      operator: op,
+      value: useLower ? value.toLowerCase() : value,
+      bindings: [useLower ? value.toLowerCase() : value],
     });
   }
+
+  // Example method to generate SQL
+  toSQL() {
+    if (!this.wheres.length) return '';
+    const sql = this.wheres.map((w, i) => {
+      const prefix = i === 0 ? '' : ` ${w.boolean} `;
+      return `${prefix}\`${w.column}\` ${w.operator} ?`;
+    }).join('');
+    return 'WHERE ' + sql;
+  }
+
 
   whereRaw(sql, bindings = []) {
     return this._pushWhere({
@@ -2138,8 +1613,52 @@ class QueryBuilder {
     return this;
   }
 
+  preload(relations) {
+    return this.with(relations);
+  }
+
   ignoreSoftDeletes() {
     this._ignoreSoftDeletes = true;
+    return this;
+  }
+
+  whereHas(relationName, callback, boolean = 'AND') {
+    const relation = this.modelClass.relations()?.[relationName];
+    if (!relation) {
+      throw new Error(`Relation '${relationName}' is not defined on ${this.modelClass.name}`);
+    }
+
+    const RelatedModel = relation.model();
+    const relatedQuery = RelatedModel.query();
+
+    // let user modify the related query
+    callback(relatedQuery);
+
+    // Build EXISTS() JOIN based on relation type
+    const parentTable = this.table;
+    const relatedTable = RelatedModel.table;
+    const parentKey = relation.localKey || this.modelClass.primaryKey;
+    const foreignKey = relation.foreignKey;
+
+    // The related subquery should NOT include SELECT columns.
+    // Instead, wrap it as an EXISTS with WHEREs + join condition.
+    const existsQuery = RelatedModel.query();
+    
+    // copy user-added wheres
+    existsQuery._wheres = relatedQuery._wheres.slice();
+
+    // add the relation join constraint
+    existsQuery.whereRaw(
+      `${escapeId(relatedTable)}.${escapeId(foreignKey)} = ${escapeId(parentTable)}.${escapeId(parentKey)}`
+    );
+
+    // Now push EXISTS into parent _wheres
+    this._wheres.push({
+      type: 'exists',
+      boolean,
+      query: existsQuery
+    });
+
     return this;
   }
 
@@ -2457,19 +1976,25 @@ class QueryBuilder {
     page = Math.max(1, Number(page));
     perPage = Math.max(1, Number(perPage));
 
-    const total = await this.count('*');
+    // Build a clone to compute total (safe — uses your existing _clone and count)
+    const countClone = this._clone();
+    countClone._select = [`COUNT(*) AS aggregate`];
+    countClone._orders = [];
+    countClone._limit = null;
+    countClone._offset = null;
+
+    const total = await countClone.count('*');
+
     const offset = (page - 1) * perPage;
 
-    this.limit(perPage).offset(offset);
-    const data = await this.get();
+    // Use a clone to fetch rows so we don't mutate caller's builder
+    const rows = await this._clone()
+      .limit(perPage)
+      .offset(offset)
+      .get();
 
-    return {
-      total,
-      perPage,
-      page,
-      lastPage: Math.ceil(total / perPage),
-      data
-    };
+    // Return Paginator instance with .toJSON()
+    return new Paginator(rows, total, page, perPage);
   }
 
   /**************************************************************************
@@ -2699,6 +2224,109 @@ class QueryBuilder {
     });
   }
 
+  toJSON() {
+    return {
+      table: this.table,
+      tableAlias: this.tableAlias,
+      modelClass: this.modelClass ? this.modelClass.name : null,
+      dialect: this.dialect,
+
+      select: this._select,
+      joins: this._joins,
+      wheres: this._wheres.map(w => {
+        const copy = { ...w };
+        // nested queries convert safely
+        if (w.query instanceof QueryBuilder) {
+          copy.query = w.query.toJSON();
+        }
+        return copy;
+      }),
+
+      group: this._group,
+      having: this._having,
+      orders: this._orders,
+
+      limit: this._limit,
+      offset: this._offset,
+      distinct: this._distinct,
+      forUpdate: this._forUpdate,
+
+      with: this._with,
+      ignoreSoftDeletes: this._ignoreSoftDeletes,
+
+      ctes: this._ctes.map(c => ({
+        name: c.name,
+        recursive: c.recursive,
+        query:
+          c.query instanceof QueryBuilder
+            ? c.query.toJSON()
+            : c.query
+      })),
+
+      unions: this._unions.map(u => ({
+        type: u.type,
+        query: u.query instanceof QueryBuilder
+          ? u.query.toJSON()
+          : u.query
+      })),
+
+      fromRaw: this._fromRaw
+    };
+  }
+
+  static fromJSON(json) {
+    const qb = new QueryBuilder(json.table, null, json.dialect);
+
+    qb.tableAlias = json.tableAlias;
+    qb._select = [...json.select];
+    qb._joins = JSON.parse(JSON.stringify(json.joins));
+
+    qb._group = [...json.group];
+    qb._having = JSON.parse(JSON.stringify(json.having));
+    qb._orders = JSON.parse(JSON.stringify(json.orders));
+    qb._limit = json.limit;
+    qb._offset = json.offset;
+    qb._distinct = json.distinct;
+    qb._forUpdate = json.forUpdate;
+
+    qb._with = [...json.with];
+    qb._ignoreSoftDeletes = json.ignoreSoftDeletes;
+
+    qb._fromRaw = json.fromRaw;
+
+    // rebuild CTEs
+    qb._ctes = json.ctes.map(c => ({
+      name: c.name,
+      recursive: c.recursive,
+      query: typeof c.query === 'object'
+        ? QueryBuilder.fromJSON(c.query)
+        : c.query
+    }));
+
+    // rebuild unions
+    qb._unions = json.unions.map(u => ({
+      type: u.type,
+      query: typeof u.query === 'object'
+        ? QueryBuilder.fromJSON(u.query)
+        : u.query
+    }));
+
+    // rebuild wheres (with nested query reconstruction)
+    qb._wheres = json.wheres.map(w => {
+      const copy = { ...w };
+
+      if (w.query && typeof w.query === 'object') {
+        copy.query = QueryBuilder.fromJSON(w.query);
+      }
+
+      return copy;
+    });
+
+    return qb;
+  }
+
+
+
   /**************************************************************************
    * TO SQL
    **************************************************************************/
@@ -2708,6 +2336,13 @@ class QueryBuilder {
       bindings: this._gatherBindings()
     };
   }
+
+  toSQLJSON() {
+    const sql = this._compileSelect();
+    const bindings = this._gatherBindings();
+    return { sql, bindings };
+  }
+
 
   toSQLWhereOnly() {
     return {
@@ -3208,6 +2843,7 @@ class Model {
   // class-level defaults
   static table = null;
   static primaryKey = 'id';
+  static slugKey = 'slug';
   static timestamps = false;
   static fillable = null;
   static tableSingular = null;
@@ -3218,6 +2854,7 @@ class Model {
   static visible = null; 
   static rules = {}; // define default validation rules
   static customMessages = {};
+  static _load = [];
 
   constructor(attributes = {}, fresh = false, data = {}) {
     this._attributes = {};
@@ -3323,15 +2960,52 @@ class Model {
   // ──────────────────────────────
   // Query builder accessors
   // ──────────────────────────────
+  // static query({ withTrashed = false } = {}) {
+  //   // use tableName getter (throws if missing)
+  //   const qb = new QueryBuilder(this.tableName, this);
+  //   if (this.softDeletes && !withTrashed) {
+  //     // avoid mutating shared _wheres reference
+  //     qb._wheres = Array.isArray(qb._wheres) ? qb._wheres.slice() : [];
+  //     qb._wheres.push({ raw: `${DB.escapeId(this.deletedAt)} IS NULL` });
+  //   }
+  //   return qb;
+  // }
+
   static query({ withTrashed = false } = {}) {
-    // use tableName getter (throws if missing)
     const qb = new QueryBuilder(this.tableName, this);
+
     if (this.softDeletes && !withTrashed) {
-      // avoid mutating shared _wheres reference
       qb._wheres = Array.isArray(qb._wheres) ? qb._wheres.slice() : [];
       qb._wheres.push({ raw: `${DB.escapeId(this.deletedAt)} IS NULL` });
     }
-    return qb;
+
+    // Wrap with proxy so await Video.query() auto calls .get()
+    let getCalled = false;
+
+    const proxy = new Proxy(qb, {
+      get(target, prop, receiver) {
+        if (prop === 'get') {
+          return (...args) => {
+            getCalled = true;     // mark that user called .get() manually
+            return target.get(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+
+      // Auto-run get() only if user didn't call get() explicitly
+      then(resolve, reject) {
+        if (getCalled) {
+          // user already called .get()
+          return;
+        }
+        target.get()
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+
+    return proxy;
   }
 
   static setTable(table) {
@@ -3350,13 +3024,31 @@ class Model {
   static whereNotIn(col, arr) { return this.query().whereNotIn(col, arr); }
   static whereNull(col) { return this.query().whereNull(col); }
 
-  static async find(id) {
-    if (id === undefined || id === null) return null;
-    return await this.query().where(this.primaryKey, id).first();
+  static async find(value) {
+    if (value === undefined || value === null) return null;
+
+    const query = this.query();
+
+    // If numeric → try primary key first
+    if (!isNaN(value)) {
+      const row = await query.where(this.primaryKey, value).first();
+      if (row) return row;
+    }
+
+    // Fallback or non-numeric → try slug
+    return await this.query()
+      .where(this.slugKey, value)
+      .first();
   }
-  static async findOrFail(id) {
-    const row = await this.find(id);
-    if (!row) throw new DBError(`${this.name} not found with ${this.primaryKey} = ${id}`);
+
+  static async findOrFail(value) {
+    const row = await this.find(value);
+    if (!row) {
+      // Better error message (handles both cases)
+      throw new DBError(
+        `${this.name} not found using ${this.primaryKey} or ${this.slugKey} = ${value}`
+      );
+    }
     return row;
   }
 
@@ -3569,6 +3261,10 @@ class Model {
     return this;
   }
 
+  async merge(attrs = {}) {
+    return this.fill(attrs);
+  }
+
   // ──────────────────────────────
   // INSERT – validation first
   // ──────────────────────────────
@@ -3673,6 +3369,7 @@ class Model {
 
     return this;
   }
+  
 
   // ──────────────────────────────
   // update() → proxies fill + save()
@@ -3909,6 +3606,32 @@ class Model {
 
   static with(relations) { return this.query().with(relations); }
 
+  async load(relations) {
+    if (!relations) return this;
+
+    if (!Array.isArray(relations)) relations = [relations];
+
+    for (const rel of relations) {
+      const relationMethod = this[rel];
+      if (typeof relationMethod !== 'function') {
+        throw new Error(
+          `Relation "${rel}" is not defined on ${this.constructor.name}`
+        );
+      }
+
+      const relation = relationMethod.call(this);
+      if (!relation || typeof relation.eagerLoad !== 'function') {
+        throw new Error(
+          `Relation "${rel}" does not support eager loading`
+        );
+      }
+
+      await relation.eagerLoad([this], rel);
+    }
+
+    return this;
+  }
+  
   // Serialization & Conversion
   toObject({ relations = true } = {}) {
     const base = {};
@@ -3956,14 +3679,12 @@ class Model {
   }
 
   toJSON() {
-    try {
-      return JSON.parse(JSON.stringify(this.toObject()));
-    } catch {
+    if (typeof this.toObject === 'function') {
       return this.toObject();
     }
+    return {};
   }
   
-
   toString() {
     return `${this.constructor.name} ${JSON.stringify(this.toObject(), null, 2)}`;
   }
@@ -3974,7 +3695,7 @@ class Model {
   }
 
   serializeDate(date) {
-    return date.toISOString();
+    return date.toLocaleString();
   }
 
   // Utility helpers
@@ -4125,4 +3846,4 @@ const debug = process.env.DEBUG?.toLowerCase() === 'true';
 // Initialize DB with debug value
 DB.initFromEnv({ debug });
 
-module.exports = { DB, Model, Validator, ValidationError, Collection, QueryBuilder, HasMany, HasOne, BelongsTo, BelongsToMany, DBError, BaseModel, DateTime, Duration, Interval, Info, parseFromFormat  };
+module.exports = { DB, Model, Validator, ValidationError, Collection, QueryBuilder, HasMany, HasOne, BelongsTo, BelongsToMany, DBError, BaseModel};
