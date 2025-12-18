@@ -26,7 +26,7 @@ const firstOrFail = await User.where('name', 'Alice').firstOrFail();
 const user = await User.findBy('email', 'jane@example.com');
 
 // Check hashed password
-const isValid = await user.checkPassword('password','user_input_password');
+const isValid = await user.checkPassword(user_input_password);
 
 // Delete / soft delete
 await user.delete();
